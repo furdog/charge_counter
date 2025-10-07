@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <assert.h>
 
+#define DEFAULT_VOLT_AND_CUR_REPORT_TIMEOUT_MS 500U
+
 /******************************************************************************
  * CLASS
  *****************************************************************************/
@@ -14,6 +16,9 @@ struct chgc
 	uint16_t _full_cap_voltage_V;
 	uint32_t _update_interval_ms;
 	uint8_t  _multiplier;
+
+	uint32_t _volt_and_cur_report_timeout_ms;
+	uint32_t _volt_and_cur_report_timer_ms;
 	
 	/* Runtime */
 	uint16_t _voltage_V;
@@ -55,6 +60,10 @@ void chgc_init(struct chgc *self)
 	self->_full_cap_voltage_V = 0U;
 	self->_update_interval_ms = 0U;
 	self->_multiplier         = 1U; /* 1x is default multiplier */
+
+	self->_volt_and_cur_report_timeout_ms  =
+		DEFAULT_VOLT_AND_CUR_REPORT_TIMEOUT_MS;
+	self->_volt_and_cur_report_timer_ms = 0U;
 
 	/* Runtime */
 	self->_voltage_V  = 0U;
@@ -123,21 +132,29 @@ void chgc_set_multiplier(struct chgc *self, uint8_t val)
 	self->_multiplier = val;
 }
 
+/* Sets report timeout if voltage and current values have not been reported
+ * for too long. The time must be a multiple of update interval.
+ * TODO split timers for each parameter */
+void chgc_set_volt_and_cur_report_timeout_ms(struct chgc *self, uint32_t val)
+{
+	self->_volt_and_cur_report_timeout_ms = val;
+}
+
 /******************************************************************************
  * RUNTIME
  *****************************************************************************/
 /* (1V/multiplier)/bit precision */
 void chgc_set_voltage_V(struct chgc *self, int16_t val)
 {
-	/* TODO set to 0, if not called for too long after certain timeout */
 	self->_voltage_V = val;
+	self->_volt_and_cur_report_timer_ms = 0U;
 }
 
 /* (1A/multiplier)/bit precision */
 void chgc_set_current_A(struct chgc *self, int16_t val)
 {
-	/* TODO set to 0, if not called for too long after certain timeout */
 	self->_current_A = val;
+	self->_volt_and_cur_report_timer_ms = 0U;
 }
 
 /* 1W/bit precision */
@@ -203,13 +220,21 @@ void chgc_recalc_cap(struct chgc *self)
 
 void chgc_update(struct chgc *self, uint32_t delta_time_ms)
 {
-
 	self->_update_timer_ms += (int32_t)delta_time_ms;
 
+	/* Update charge counter with strictly specified interval
+	 * Regardless of chgc_update(...) rate */
 	if (self->_update_timer_ms >= (int32_t)self->_update_interval_ms) {
 		self->_update_timer_ms -= (int32_t)self->_update_interval_ms;
 
-		chgc_recalc_cap(self);
+		self->_volt_and_cur_report_timer_ms +=
+			self->_update_interval_ms;
+
+		/* Only recalculate capacity if values were reported in time */
+		if (self->_volt_and_cur_report_timer_ms <
+		    self->_volt_and_cur_report_timeout_ms) {
+			chgc_recalc_cap(self);
+		}
 	}
 }
 

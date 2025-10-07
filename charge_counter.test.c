@@ -22,11 +22,12 @@ void chgc_test()
 	uint32_t counts_per_hour = (1000U / update_interval_ms) * 60U * 60U;
 	uint32_t ms_per_hour = 1000 * 60U * 60U;
 
-	/* Calculate capacity counts */
+	/* Calculate MAX (100% SOC) capacity counts */
 	int64_t capacity_counts = (int64_t)(capacity * 1000.f) *
 				       counts_per_hour * CHGC_MULTIPLIER_TOTAL;
 
 	uint64_t i;
+	int64_t  temp_counts;
 	
 	struct chgc chgc;
 
@@ -132,6 +133,9 @@ void chgc_test()
 	/* LEGACY: assert(chgc._cap_counts == capacity_counts);
 	 * Now we have to wait at least 5 seconds for get to 100% */
 	for (i = 0; i < 4999 - update_interval_ms; i++) {
+		chgc_set_voltage_V(&chgc, 400 * CHGC_MULTIPLIER);
+		chgc_set_current_A(&chgc, 1   * CHGC_MULTIPLIER);
+
 		chgc_update(&chgc, 1);
 	}
 	assert(chgc._cap_counts != capacity_counts);
@@ -140,6 +144,44 @@ void chgc_test()
 
 	printf("chgc_get_soc_pct(&chgc): %f\n", chgc_get_soc_pct(&chgc));
 	assert(cmp_floats_with_epsilon(chgc_get_soc_pct(&chgc), 100.0, 0.1));
+
+	/* Test if values that have not been reported for certain time will
+	 * not change cap counts */
+	chgc_set_voltage_V(&chgc,  400 * CHGC_MULTIPLIER);
+	chgc_set_current_A(&chgc, -1   * CHGC_MULTIPLIER);
+
+	/* Update for DEFAULT_VOLT_AND_CUR_REPORT_TIMEOUT_MS - 1,
+	 * without reporting values */
+	temp_counts = chgc._cap_counts;
+	for (i = 0; i < DEFAULT_VOLT_AND_CUR_REPORT_TIMEOUT_MS - 1 -
+		        update_interval_ms; i++) {
+		chgc_update(&chgc, 1);
+	}
+
+	/* _cap_counts should go down */
+	assert(temp_counts > chgc._cap_counts);
+	temp_counts = chgc._cap_counts;
+
+	/* We're approaching DEFAULT_VOLT_AND_CUR_REPORT_TIMEOUT_MS here
+	 * must go down one more time */
+	chgc_update(&chgc, 1);
+	assert(temp_counts > chgc._cap_counts);
+	temp_counts = chgc._cap_counts;
+
+	/* We're already in timeout,
+	 * this should not change our counter in any way */
+	chgc_update(&chgc, 1);
+	assert(temp_counts == chgc._cap_counts);
+
+	/* Now we're trying to recover from timeout by reporting again */
+	chgc_set_voltage_V(&chgc,  400 * CHGC_MULTIPLIER);
+	chgc_set_current_A(&chgc, -1   * CHGC_MULTIPLIER);
+
+	/* Should go down again */
+	chgc_update(&chgc, 10);
+	assert(temp_counts > chgc._cap_counts);
+
+	printf("chgc_get_soc_pct(&chgc): %f\n", chgc_get_soc_pct(&chgc));
 }
 
 int main()
