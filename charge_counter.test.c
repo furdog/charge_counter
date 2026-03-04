@@ -32,6 +32,11 @@ void chgc_test()
 	struct chgc chgc;
 
 	chgc_init(&chgc);
+
+	/* Check division by 0u */
+	assert(_chgc_get_counts_per_hour(&chgc) == 1000U * 60U * 60U);
+	assert(chgc_get_remain_cap_wh(&chgc) == 0u);
+
 	chgc_set_multiplier         (&chgc, CHGC_MULTIPLIER);
 	chgc_set_update_interval_ms (&chgc, 10U);
 	chgc_set_full_cap_kwh       (&chgc, capacity);

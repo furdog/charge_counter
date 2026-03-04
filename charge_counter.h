@@ -41,7 +41,14 @@ int64_t _chgc_get_multiplier_total(struct chgc *self)
 
 int64_t _chgc_get_counts_per_hour(struct chgc *self)
 {
-	return ((1000U / self->_update_interval_ms) * 60U * 60U);
+	uint32_t update_interval = self->_update_interval_ms;
+
+	if (update_interval == 0u) {
+		/* Default to 1ms to prevent division by zero */
+		update_interval = 1u;
+	}
+
+	return ((1000U / update_interval) * 60U * 60U);
 }
 
 int64_t _chgc_conv_wh_to_counts(struct chgc *self, int64_t val)
@@ -160,11 +167,22 @@ void chgc_set_current_A(struct chgc *self, int16_t val)
 /* 1W/bit precision */
 uint32_t chgc_get_remain_cap_wh(struct chgc *self)
 {
-	/* Divide accumulated energy to update intervals per hour
-	 * Also divide by squared multiplier, since _cap_counts is a
-	 * product of both scaled voltage and current */
-	return (self->_cap_counts / _chgc_get_counts_per_hour(self)) /
-		_chgc_get_multiplier_total(self);
+	int64_t counts_per_h = _chgc_get_counts_per_hour(self);
+	int64_t mul_total    = _chgc_get_multiplier_total(self);
+
+	int64_t result = 0;
+
+	/* Division by zero */
+	if ((counts_per_h == 0) || (mul_total == 0)) {
+		result = 0;
+	} else {
+		/* Divide accumulated energy to update intervals per hour
+		 * Also divide by squared multiplier, since _cap_counts is a
+		 * product of both scaled voltage and current */
+		result = (self->_cap_counts / counts_per_h) / mul_total;
+	}
+
+	return result;
 }
 
 /* 1W/bit precision */
