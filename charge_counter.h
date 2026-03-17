@@ -1,3 +1,32 @@
+/**
+ * @file charge_counter.h
+ * @brief Charge counter (Hardware-Agnostic)
+ *
+ * This file contains the software implementation of the charge counter logic.
+ * The design is hardware-agnostic, requiring an external adaptation layer
+ * for hardware interaction.
+ *
+ * **Conventions:**
+ * C89, Linux kernel style, MISRA, rule of 10, No hardware specific code,
+ * only generic C and some binding layer. Be extra specific about types.
+ *
+ * Scientific units where posible at end of the names, for example:
+ * - timer_10s (timer_10s has a resolution of 10s per bit)
+ * - power_150w (power 150W per bit or 0.15kw per bit)
+ *
+ * Keep variables without units if they're unknown or not specified or hard
+ * to define with short notation.
+ *
+ * ```LICENSE
+ * Copyright (c) 2025 furdog <https://github.com/furdog>
+ *
+ * SPDX-License-Identifier: 0BSD
+ * ```
+ *
+ * Be free, be wise and take care of yourself!
+ * With best wishes and respect, furdog
+ */
+
 #ifndef CHARGE_COUNTER_H
 #define CHARGE_COUNTER_H
 

@@ -67,3 +67,5 @@ int main() {
 }
 
 ```
+
+Coverage report is available at: https://furdog.github.io/charge_counter/coverage/
