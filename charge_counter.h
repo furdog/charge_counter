@@ -27,260 +27,289 @@
  * With best wishes and respect, furdog
  */
 
-#ifndef CHARGE_COUNTER_H
-#define CHARGE_COUNTER_H
+#ifndef CHARGE_COUNTER_HEADER_GUARD
+#define CHARGE_COUNTER_HEADER_GUARD
 
 #include <assert.h>
+#include <stdbool.h>
 #include <stdint.h>
 
-#define DEFAULT_VOLT_AND_CUR_REPORT_TIMEOUT_MS 500U
-
 /******************************************************************************
- * CLASS
+ * CHARGE COUNTER
  *****************************************************************************/
-struct chgc {
-	/* Config */
-	uint32_t _full_cap_wh;
-	uint16_t _full_cap_voltage_V;
-	uint32_t _update_interval_ms;
-	uint8_t	 _multiplier;
+/** Config is set after init, before any other operations */
+struct chgc_config {
+	/** How often voltage/current reports are expected? */
+	uint32_t update_interval_ms;
 
-	uint32_t _volt_and_cur_report_timeout_ms;
-	uint32_t _volt_and_cur_report_timer_ms;
+	/** How long we allowed to wait voltage/current report? */
+	uint32_t report_timeout_ms;
 
-	/* Runtime */
-	uint16_t _voltage_V;
-	int16_t	 _current_A;
+	uint32_t max_energy_wh; /**< Max energy (watt/hours) */
 
-	/* Capacity counter (accumulator) */
-	int64_t _cap_counts;
-
-	int32_t	 _update_timer_ms;
-	uint32_t _full_cap_voltage_debounce_ms;
+	uint8_t multiplier_V; /**< Reported voltage multiplier */
+	uint8_t multiplier_A; /**< Reported current multiplier */
 };
 
-/******************************************************************************
- * PRIVATE
- *****************************************************************************/
-int64_t _chgc_get_multiplier_total(struct chgc *self)
+/** Main instance */
+struct chgc {
+	struct chgc_config _config;
+
+	/** Time integral of power (Riemann Sum) */
+	int64_t _energy_accum;
+
+	uint32_t _report_timer_ms; /**< Used to calculate report timeout */
+	uint32_t _update_timer_ms; /**< Used to hold update integral */
+
+	/** If _max_energy_trigger is true, this timer will increase.
+	 *  It is compared with debounce time */
+	uint32_t _max_energy_trigger_timer_ms;
+
+	uint16_t _voltage_V; /**< Reported voltage */
+	int16_t	 _current_A; /**< Reported current */
+
+	/** If true for certain period of time (debounce)
+	 *  _energy_accum will be set to its maximum value */
+	bool _max_energy_trigger;
+};
+
+/*--------------------------------------------------------------- PUBLIC API */
+/** Initializes charge counter structure with default values */
+void chgc_init(struct chgc *self);
+
+/** Set config after initialization */
+bool chgc_set_config(struct chgc *self, const struct chgc_config cfg);
+
+/** Get config */
+struct chgc_config chgc_get_config(const struct chgc *self);
+
+/** Set remaining energy */
+void chgc_set_energy_wh(struct chgc *self, const uint32_t val);
+
+/** Get remaining energy */
+uint32_t chgc_get_energy_wh(const struct chgc *self);
+
+/** Get max energy, that can be stored */
+uint32_t chgc_get_max_energy_wh(const struct chgc *self);
+
+/** Returns State of Charge in range 0 - 100 */
+uint8_t chgc_get_soc_pct(const struct chgc *self);
+
+/** Updates voltage reading */
+void chgc_set_voltage_V(struct chgc *self, const uint32_t val_V);
+
+/** Updates current reading */
+void chgc_set_current_A(struct chgc *self, const int32_t val_A);
+
+/** If set to true for long enough, remaining energy may be dropped to max
+ * energy */
+void chgc_trigger_max_energy(struct chgc *self, const bool val);
+
+/** Main update loop for the charge counter */
+void chgc_update(struct chgc *self, const uint32_t delta_time_ms);
+/*---------------------------------------------------------------------------*/
+
+#ifndef CHARGE_COUNTER_IMPLEMENTATION
+static int64_t _chgc_get_multiplier_total(const struct chgc *self)
 {
-	return (self->_multiplier * self->_multiplier);
+	return (self->_config.multiplier_V * self->_config.multiplier_A);
 }
 
-int64_t _chgc_get_counts_per_hour(struct chgc *self)
+static int64_t _chgc_get_counts_per_hour(const struct chgc *self)
 {
-	uint32_t update_interval = self->_update_interval_ms;
+	uint32_t update_interval = self->_config.update_interval_ms;
 
 	if (update_interval == 0u) {
 		/* Default to 1ms to prevent division by zero */
 		update_interval = 1u;
 	}
 
-	return ((1000U / update_interval) * 60U * 60U);
+	return ((1000u / update_interval) * 60u * 60u);
 }
 
-int64_t _chgc_conv_wh_to_counts(struct chgc *self, int64_t val)
+static int64_t _chgc_conv_wh_to_counts(struct chgc *self, const int64_t val)
 {
 	return val * _chgc_get_counts_per_hour(self) *
 	       _chgc_get_multiplier_total(self);
 }
 
-/******************************************************************************
- * INIT
- *****************************************************************************/
+void _chgc_recalc_energy(struct chgc *self)
+{
+	/* Calculate capacity counts */
+	int64_t full_energy_accum =
+	    _chgc_conv_wh_to_counts(self, self->_config.max_energy_wh);
+
+	self->_energy_accum +=
+	    (int64_t)self->_voltage_V * (int64_t)self->_current_A;
+
+	/* If trigger is active - count its duration */
+	if (self->_max_energy_trigger) {
+		self->_max_energy_trigger_timer_ms +=
+		    self->_config.update_interval_ms;
+	} else {
+		self->_max_energy_trigger_timer_ms = 0u;
+	}
+
+	/* If trigger is active for 5 seconds - set capacity too 100% */
+	if (self->_max_energy_trigger_timer_ms >= 5000u) {
+		self->_max_energy_trigger_timer_ms = 0u;
+
+		self->_energy_accum = full_energy_accum;
+	}
+
+	/* Accumulated capacity should not exceed battery capacity
+	 * nor go below negative capacity */
+	if (self->_energy_accum > full_energy_accum) {
+		self->_energy_accum = full_energy_accum;
+	} else if (self->_energy_accum < 0) {
+		self->_energy_accum = 0;
+	} else {
+	}
+}
+
 void chgc_init(struct chgc *self)
 {
-	/* Config */
-	self->_full_cap_wh	  = 0U;
-	self->_full_cap_voltage_V = 0U;
-	self->_update_interval_ms = 0U;
-	self->_multiplier	  = 1U; /* 1x is default multiplier */
+	assert(self);
 
-	self->_volt_and_cur_report_timeout_ms =
-	    DEFAULT_VOLT_AND_CUR_REPORT_TIMEOUT_MS;
-	self->_volt_and_cur_report_timer_ms = 0U;
+	/* Config */
+	self->_config.update_interval_ms = 0u;
+
+	self->_config.report_timeout_ms = 0u;
+
+	self->_config.max_energy_wh = 0u;
+
+	self->_config.multiplier_V = 1u;
+	self->_config.multiplier_A = 1u;
 
 	/* Runtime */
-	self->_voltage_V  = 0U;
-	self->_current_A  = 0U;
-	self->_cap_counts = 0;
+	self->_energy_accum = 0u;
 
-	self->_update_timer_ms		    = 0;
-	self->_full_cap_voltage_debounce_ms = 0;
+	self->_report_timer_ms = 0u;
+	self->_update_timer_ms = 0u;
+
+	self->_max_energy_trigger_timer_ms = 0u;
+
+	self->_voltage_V = 0u;
+	self->_current_A = 0u;
+
+	self->_max_energy_trigger = 0u;
 }
 
-/******************************************************************************
- * CONFIG
- *****************************************************************************/
-void chgc_set_full_cap_wh(struct chgc *self, uint32_t val)
+bool chgc_set_config(struct chgc *self, const struct chgc_config cfg)
 {
-	self->_full_cap_wh = val;
+	bool success = false;
+
+	assert(self);
+
+	/* If max energy > 0u, the config is considered to already be set */
+	if (self->_config.max_energy_wh == 0u) {
+		self->_config = cfg;
+		success	      = true;
+	}
+
+	return success;
 }
 
-void chgc_set_full_cap_kwh(struct chgc *self, float val)
+struct chgc_config chgc_get_config(const struct chgc *self)
 {
-	chgc_set_full_cap_wh(self, val * 1000.0f);
+	assert(self);
+
+	return self->_config;
 }
 
-uint32_t chgc_get_full_cap_wh(struct chgc *self) { return self->_full_cap_wh; }
-
-float chgc_get_full_cap_kwh(struct chgc *self)
+void chgc_set_energy_wh(struct chgc *self, const uint32_t val)
 {
-	return chgc_get_full_cap_wh(self) / 1000.0f;
+	assert(self);
+
+	self->_energy_accum = (int64_t)val * _chgc_get_counts_per_hour(self) *
+			      _chgc_get_multiplier_total(self);
 }
 
-/* Multiplier must be set before call */
-void chgc_set_initial_cap_kwh(struct chgc *self, float val)
-{
-	int64_t e = (int64_t)(val * 1000.0f); /* convert to watts */
-
-	/* Setting initial capacity without update interval
-	 * is undefined behaviour (TODO define) */
-	assert(self->_update_interval_ms != 0U);
-
-	e = e * _chgc_get_counts_per_hour(self);
-
-	self->_cap_counts = e * _chgc_get_multiplier_total(self);
-}
-
-void chgc_set_full_cap_voltage_V(struct chgc *self, uint16_t val)
-{
-	self->_full_cap_voltage_V = val;
-}
-
-void chgc_set_update_interval_ms(struct chgc *self, uint32_t val)
-{
-	/* Changing interval is undefined behaviour (TODO define) */
-	assert(self->_cap_counts == 0);
-
-	self->_update_interval_ms = val;
-	self->_update_timer_ms	  = val;
-}
-
-/* Input current and voltage will be divided (without precission loss)
- * by this value */
-void chgc_set_multiplier(struct chgc *self, uint8_t val)
-{
-	self->_multiplier = val;
-}
-
-/* Sets report timeout if voltage and current values have not been reported
- * for too long. The time must be a multiple of update interval.
- * TODO split timers for each parameter */
-void chgc_set_volt_and_cur_report_timeout_ms(struct chgc *self, uint32_t val)
-{
-	self->_volt_and_cur_report_timeout_ms = val;
-}
-
-/******************************************************************************
- * RUNTIME
- *****************************************************************************/
-/* (1V/multiplier)/bit precision */
-void chgc_set_voltage_V(struct chgc *self, int16_t val)
-{
-	self->_voltage_V		    = val;
-	self->_volt_and_cur_report_timer_ms = 0U;
-}
-
-/* (1A/multiplier)/bit precision */
-void chgc_set_current_A(struct chgc *self, int16_t val)
-{
-	self->_current_A		    = val;
-	self->_volt_and_cur_report_timer_ms = 0U;
-}
-
-/* 1W/bit precision */
-uint32_t chgc_get_remain_cap_wh(struct chgc *self)
+uint32_t chgc_get_energy_wh(const struct chgc *self)
 {
 	int64_t counts_per_h = _chgc_get_counts_per_hour(self);
 	int64_t mul_total    = _chgc_get_multiplier_total(self);
 
 	int64_t result = 0;
 
+	assert(self);
+
 	/* Division by zero */
 	if ((counts_per_h == 0) || (mul_total == 0)) {
 		result = 0;
 	} else {
 		/* Divide accumulated energy to update intervals per hour
-		 * Also divide by squared multiplier, since _cap_counts is a
+		 * Also divide by squared multiplier, since _energy_accum is a
 		 * product of both scaled voltage and current */
-		result = (self->_cap_counts / counts_per_h) / mul_total;
+		result = (self->_energy_accum / counts_per_h) / mul_total;
 	}
 
 	return result;
 }
 
-/* 1W/bit precision */
-float chgc_get_remain_cap_kwh(struct chgc *self)
+uint32_t chgc_get_max_energy_wh(const struct chgc *self)
 {
-	return chgc_get_remain_cap_wh(self) / 1000.0f;
+	assert(self);
+
+	return self->_config.max_energy_wh;
 }
 
-float chgc_get_soc_pct(struct chgc *self)
+uint8_t chgc_get_soc_pct(const struct chgc *self)
 {
-	float result = 0.0f;
+	uint8_t result = 0u;
 
-	if (self->_full_cap_wh > 0U) {
-		result = (chgc_get_remain_cap_kwh(self) /
-			  chgc_get_full_cap_kwh(self)) *
-			 100.0f;
+	assert(self);
+
+	if (self->_config.max_energy_wh > 0u) {
+		result = chgc_get_energy_wh(self) * 100u /
+			 chgc_get_max_energy_wh(self);
 	}
 
 	return result;
 }
 
-void chgc_recalc_cap(struct chgc *self)
+void chgc_set_voltage_V(struct chgc *self, const uint32_t val)
 {
-	/* Calculate capacity counts */
-	int64_t full_cap_counts =
-	    _chgc_conv_wh_to_counts(self, self->_full_cap_wh);
+	assert(self);
 
-	self->_cap_counts +=
-	    (int64_t)self->_voltage_V * (int64_t)self->_current_A;
-
-	/* If voltage is higher than full capacity voltage - increment timer */
-	if (self->_voltage_V >=
-	    (self->_full_cap_voltage_V * self->_multiplier)) {
-		self->_full_cap_voltage_debounce_ms +=
-		    self->_update_interval_ms;
-	} else {
-		self->_full_cap_voltage_debounce_ms = 0U;
-	}
-
-	/* If voltage was higher for 5 seconds - set capacity too 100% */
-	if (self->_full_cap_voltage_debounce_ms >= 5000U) {
-		self->_full_cap_voltage_debounce_ms = 0U;
-		self->_cap_counts		    = full_cap_counts;
-	}
-
-	/* Accumulated capacity should not exceed battery capacity
-	 * nor go below negative capacity */
-	if (self->_cap_counts > full_cap_counts) {
-		self->_cap_counts = full_cap_counts;
-	} else if (self->_cap_counts < 0) {
-		self->_cap_counts = 0;
-	} else {
-	}
+	self->_voltage_V       = val;
+	self->_report_timer_ms = 0u;
 }
 
-void chgc_update(struct chgc *self, uint32_t delta_time_ms)
+void chgc_set_current_A(struct chgc *self, const int32_t val)
 {
-	self->_update_timer_ms += (int32_t)delta_time_ms;
+	assert(self);
+
+	self->_current_A       = val;
+	self->_report_timer_ms = 0u;
+}
+
+void chgc_trigger_max_energy(struct chgc *self, const bool val)
+{
+	assert(self);
+
+	self->_max_energy_trigger = val;
+}
+
+void chgc_update(struct chgc *self, const uint32_t delta_time_ms)
+{
+	assert(self);
+
+	self->_update_timer_ms += delta_time_ms;
 
 	/* Update charge counter with strictly specified interval
 	 * Regardless of chgc_update(...) rate */
-	if (self->_update_timer_ms >= (int32_t)self->_update_interval_ms) {
-		self->_update_timer_ms -= (int32_t)self->_update_interval_ms;
+	if (self->_update_timer_ms >= self->_config.update_interval_ms) {
+		self->_update_timer_ms -= self->_config.update_interval_ms;
 
-		self->_volt_and_cur_report_timer_ms +=
-		    self->_update_interval_ms;
+		self->_report_timer_ms += self->_config.update_interval_ms;
 
 		/* Only recalculate capacity if values were reported in time */
-		if (self->_volt_and_cur_report_timer_ms <
-		    self->_volt_and_cur_report_timeout_ms) {
-			chgc_recalc_cap(self);
+		if (self->_report_timer_ms < self->_config.report_timeout_ms) {
+			_chgc_recalc_energy(self);
 		}
 	}
 }
+#endif /* CHARGE_COUNTER_IMPLEMENTATION */
 
-#endif /* CHARGE_COUNTER_H */
+#endif /* CHARGE_COUNTER_HEADER_GUARD */

@@ -29,22 +29,24 @@ void chgc_test()
 	uint64_t i;
 	int64_t	 temp_counts;
 
-	struct chgc chgc;
+	struct chgc	   chgc;
+	struct chgc_config cfg;
 
 	chgc_init(&chgc);
 
 	/* Check division by 0u */
 	assert(_chgc_get_counts_per_hour(&chgc) == 1000U * 60U * 60U);
-	assert(chgc_get_remain_cap_wh(&chgc) == 0u);
+	assert(chgc_get_energy_wh(&chgc) == 0u);
 
-	chgc_set_multiplier(&chgc, CHGC_MULTIPLIER);
-	chgc_set_update_interval_ms(&chgc, 10U);
-	chgc_set_full_cap_kwh(&chgc, capacity);
-	chgc_set_full_cap_voltage_V(&chgc, 400.0f);
-	chgc_set_initial_cap_kwh(&chgc, 0.0f);
+	cfg.max_energy_wh      = capacity * 1000u;
+	cfg.update_interval_ms = 10u;
+	cfg.multiplier_V       = CHGC_MULTIPLIER;
+	cfg.multiplier_A       = CHGC_MULTIPLIER;
+	cfg.report_timeout_ms  = 500u;
+	chgc_set_config(&chgc, cfg);
 
-	assert(cmp_floats_with_epsilon(chgc_get_remain_cap_kwh(&chgc), 0.0,
-				       0.001f));
+	assert(
+	    cmp_floats_with_epsilon(chgc_get_energy_wh(&chgc), 0.0, 0.001f));
 
 	/* Put 350 volts and 5 amps during 1 hour */
 	for (i = 0; i < ms_per_hour; i++) {
@@ -53,49 +55,44 @@ void chgc_test()
 		chgc_update(&chgc, 1);
 	}
 
-	/* printf("chgc._cap_counts: %lli\n", chgc._cap_counts);
+	/* printf("chgc._energy_accum: %lli\n", chgc._energy_accum);
 	 */
-	printf("chgc_get_remain_cap_kwh(&chgc): %f\n",
-	       chgc_get_remain_cap_kwh(&chgc));
-	assert(cmp_floats_with_epsilon(chgc_get_remain_cap_kwh(&chgc), 1.750,
-				       0.1));
+	printf("chgc_get_energy_wh(&chgc): %u\n", chgc_get_energy_wh(&chgc));
+	assert(cmp_floats_with_epsilon(chgc_get_energy_wh(&chgc), 1750, 0.1));
 
-	printf("chgc_get_soc_pct(&chgc): %f\n", chgc_get_soc_pct(&chgc));
+	printf("chgc_get_soc_pct(&chgc): %u\n", chgc_get_soc_pct(&chgc));
 	assert(cmp_floats_with_epsilon(chgc_get_soc_pct(&chgc), 25.0, 0.1));
 
 	/* Put 350 volts and 20 amps during 1 hour (minus one count) */
-	chgc_set_initial_cap_kwh(&chgc, 0.0f);
+	chgc_set_energy_wh(&chgc, 0u);
 	for (i = 0; i < ms_per_hour - update_interval_ms; i++) {
 		chgc_set_voltage_V(&chgc, 350 * CHGC_MULTIPLIER);
 		chgc_set_current_A(&chgc, 20 * CHGC_MULTIPLIER);
 		chgc_update(&chgc, 1);
 	}
-	/* printf("chgc._cap_counts: %lli\n", chgc._cap_counts);
+	/* printf("chgc._energy_accum: %lli\n", chgc._energy_accum);
 	 */
 	/* Check edge case. Must be less than capacity */
-	assert(chgc._cap_counts < capacity_counts);
-	printf("chgc_get_remain_cap_kwh(&chgc): %f\n",
-	       chgc_get_remain_cap_kwh(&chgc));
+	assert(chgc._energy_accum < capacity_counts);
+	printf("chgc_get_energy_wh(&chgc): %u\n", chgc_get_energy_wh(&chgc));
 
 	/* Add one more count and check edge case
 	 * Must be equal to capacity */
 	chgc_set_voltage_V(&chgc, 350 * CHGC_MULTIPLIER);
 	chgc_set_current_A(&chgc, 20 * CHGC_MULTIPLIER);
 	chgc_update(&chgc, update_interval_ms);
-	assert(chgc._cap_counts == capacity_counts);
-	printf("chgc_get_remain_cap_kwh(&chgc): %f\n",
-	       chgc_get_remain_cap_kwh(&chgc));
+	assert(chgc._energy_accum == capacity_counts);
+	printf("chgc_get_energy_wh(&chgc): %u\n", chgc_get_energy_wh(&chgc));
 
 	/* Add one more count and check edge case
 	 * Should not exceed capacity */
 	chgc_set_voltage_V(&chgc, 350 * CHGC_MULTIPLIER);
 	chgc_set_current_A(&chgc, 20 * CHGC_MULTIPLIER);
 	chgc_update(&chgc, update_interval_ms);
-	assert(chgc._cap_counts == capacity_counts);
-	printf("chgc_get_remain_cap_kwh(&chgc): %f\n",
-	       chgc_get_remain_cap_kwh(&chgc));
+	assert(chgc._energy_accum == capacity_counts);
+	printf("chgc_get_energy_wh(&chgc): %u\n", chgc_get_energy_wh(&chgc));
 
-	printf("chgc_get_soc_pct(&chgc): %f\n", chgc_get_soc_pct(&chgc));
+	printf("chgc_get_soc_pct(&chgc): %u\n", chgc_get_soc_pct(&chgc));
 	assert(cmp_floats_with_epsilon(chgc_get_soc_pct(&chgc), 100.0, 0.1));
 
 	/* Put 350 volts and -20 amps during 1 hour (minus one count) */
@@ -104,50 +101,53 @@ void chgc_test()
 		chgc_set_current_A(&chgc, -20 * CHGC_MULTIPLIER);
 		chgc_update(&chgc, 1);
 	}
-	/* printf("chgc._cap_counts: %lli\n", chgc._cap_counts); */
+	/* printf("chgc._energy_accum: %lli\n", chgc._energy_accum); */
 	/* Check edge case. Must be more than 0.0 kwh */
-	assert(chgc._cap_counts > 0.0);
-	printf("chgc_get_remain_cap_kwh(&chgc): %f\n",
-	       chgc_get_remain_cap_kwh(&chgc));
+	assert(chgc._energy_accum > 0.0);
+	printf("chgc_get_energy_wh(&chgc): %u\n", chgc_get_energy_wh(&chgc));
 
 	/* Add one more count and check edge case
 	 * Must be equal to 0.0kwh */
 	chgc_set_voltage_V(&chgc, 350 * CHGC_MULTIPLIER);
 	chgc_set_current_A(&chgc, -20 * CHGC_MULTIPLIER);
 	chgc_update(&chgc, update_interval_ms);
-	assert(chgc._cap_counts == 0.0);
-	printf("chgc_get_remain_cap_kwh(&chgc): %f\n",
-	       chgc_get_remain_cap_kwh(&chgc));
+	assert(chgc._energy_accum == 0.0);
+	printf("chgc_get_energy_wh(&chgc): %u\n", chgc_get_energy_wh(&chgc));
 
 	/* Add one more count and check edge case
 	 * Should not go below 0.0kwh */
 	chgc_set_voltage_V(&chgc, 350 * CHGC_MULTIPLIER);
 	chgc_set_current_A(&chgc, -20 * CHGC_MULTIPLIER);
 	chgc_update(&chgc, update_interval_ms);
-	assert(chgc._cap_counts == 0.0);
-	printf("chgc_get_remain_cap_kwh(&chgc): %f\n",
-	       chgc_get_remain_cap_kwh(&chgc));
+	assert(chgc._energy_accum == 0.0);
+	printf("chgc_get_energy_wh(&chgc): %u\n", chgc_get_energy_wh(&chgc));
 
-	printf("chgc_get_soc_pct(&chgc): %f\n", chgc_get_soc_pct(&chgc));
+	printf("chgc_get_soc_pct(&chgc): %u\n", chgc_get_soc_pct(&chgc));
 	assert(cmp_floats_with_epsilon(chgc_get_soc_pct(&chgc), 0.0, 0.1));
 
 	/* Check if 100% voltage sets energy too capacity */
 	chgc_set_voltage_V(&chgc, 400 * CHGC_MULTIPLIER);
 	chgc_set_current_A(&chgc, 1 * CHGC_MULTIPLIER);
+	chgc_trigger_max_energy(&chgc, true);
 	chgc_update(&chgc, update_interval_ms);
-	/* LEGACY: assert(chgc._cap_counts == capacity_counts);
+	/* Enable max energy trigger
 	 * Now we have to wait at least 5 seconds for get to 100% */
 	for (i = 0; i < 4999 - update_interval_ms; i++) {
 		chgc_set_voltage_V(&chgc, 400 * CHGC_MULTIPLIER);
 		chgc_set_current_A(&chgc, 1 * CHGC_MULTIPLIER);
+		chgc_trigger_max_energy(&chgc, true);
 
 		chgc_update(&chgc, 1);
 	}
-	assert(chgc._cap_counts != capacity_counts);
-	chgc_update(&chgc, 1);
-	assert(chgc._cap_counts == capacity_counts);
+	printf("_max_energy_trigger_timer_ms %u\n",
+	       chgc._max_energy_trigger_timer_ms);
 
-	printf("chgc_get_soc_pct(&chgc): %f\n", chgc_get_soc_pct(&chgc));
+	assert(chgc._energy_accum != capacity_counts);
+	chgc_update(&chgc, 1);
+	assert(chgc._energy_accum == capacity_counts);
+	chgc_trigger_max_energy(&chgc, false);
+
+	printf("chgc_get_soc_pct(&chgc): %u\n", chgc_get_soc_pct(&chgc));
 	assert(cmp_floats_with_epsilon(chgc_get_soc_pct(&chgc), 100.0, 0.1));
 
 	/* Test if values that have not been reported for certain time will
@@ -157,27 +157,25 @@ void chgc_test()
 
 	/* Update for DEFAULT_VOLT_AND_CUR_REPORT_TIMEOUT_MS - 1,
 	 * without reporting values */
-	temp_counts = chgc._cap_counts;
-	for (i = 0; i < DEFAULT_VOLT_AND_CUR_REPORT_TIMEOUT_MS - 1 -
-			    update_interval_ms;
-	     i++) {
+	temp_counts = chgc._energy_accum;
+	for (i = 0; i < 500u - 1 - update_interval_ms; i++) {
 		chgc_update(&chgc, 1);
 	}
 
-	/* _cap_counts should go down */
-	assert(temp_counts > chgc._cap_counts);
-	temp_counts = chgc._cap_counts;
+	/* _energy_accum should go down */
+	assert(temp_counts > chgc._energy_accum);
+	temp_counts = chgc._energy_accum;
 
 	/* We're approaching DEFAULT_VOLT_AND_CUR_REPORT_TIMEOUT_MS here
 	 * must go down one more time */
 	chgc_update(&chgc, 1);
-	assert(temp_counts > chgc._cap_counts);
-	temp_counts = chgc._cap_counts;
+	assert(temp_counts > chgc._energy_accum);
+	temp_counts = chgc._energy_accum;
 
 	/* We're already in timeout,
 	 * this should not change our counter in any way */
 	chgc_update(&chgc, 1);
-	assert(temp_counts == chgc._cap_counts);
+	assert(temp_counts == chgc._energy_accum);
 
 	/* Now we're trying to recover from timeout by reporting again */
 	chgc_set_voltage_V(&chgc, 400 * CHGC_MULTIPLIER);
@@ -185,9 +183,9 @@ void chgc_test()
 
 	/* Should go down again */
 	chgc_update(&chgc, 10);
-	assert(temp_counts > chgc._cap_counts);
+	assert(temp_counts > chgc._energy_accum);
 
-	printf("chgc_get_soc_pct(&chgc): %f\n", chgc_get_soc_pct(&chgc));
+	printf("chgc_get_soc_pct(&chgc): %u\n", chgc_get_soc_pct(&chgc));
 }
 
 int main()

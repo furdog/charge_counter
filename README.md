@@ -1,71 +1,64 @@
 # **Charge Counter** ⚡️
 
-This C code provides a simple **charge counter** for tracking the **State of Charge (SoC)** and remaining capacity of a battery. It's designed to be lightweight and suitable for embedded systems.
+Hardware-agnostic C89 library for tracking battery State of Charge (SoC) via Riemann sum integration of power (Coulomb counting variant).
 
------
+## **Core Logic**
+The library accumulates energy counts by integrating reported voltage and current over a defined time interval. 
+* **Integration:** `_energy_accum += voltage * current` performed every `update_interval_ms`.
+* **Recalibration:** Forced synchronization to 100% SoC occurs if `_max_energy_trigger` is high for $\ge 5000\text{ms}$.
+* **Safety:** Hard clamping of `_energy_accum` between $0$ and `max_energy_wh`.
+* **Data Integrity:** Updates halt if `report_timeout_ms` is exceeded without a fresh call to `chgc_set_voltage_V` or `chgc_set_current_A`.
 
-## **How it Works**
+## **API Reference**
 
-The library integrates **voltage** and **current** measurements over time to calculate the energy consumed or replenished in a battery. It uses an internal accumulator, `_cap_counts`, to track the energy change.
+### **Initialization & Configuration**
+1.  **`chgc_init(struct chgc *self)`**: Zeroes all internal timers and accumulators.
+2.  **`chgc_set_config(struct chgc *self, const struct chgc_config cfg)`**: Sets operational parameters. Only permitted once (fails if `max_energy_wh > 0`).
 
-A key feature is its ability to automatically recalibrate to **100% SoC** when the battery voltage stays above a specified `_full_cap_voltage_V` for more than five seconds, ensuring accuracy and preventing drift.
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `update_interval_ms` | `uint32_t` | Frequency of the integration step. |
+| `report_timeout_ms` | `uint32_t` | Max allowed age of sensor data before integration halts. |
+| `max_energy_wh` | `uint32_t` | Battery capacity in Watt-hours. |
+| `multiplier_V` | `uint8_t` | Scaling factor for voltage input (e.g., 2 for 0.5V units). |
+| `multiplier_A` | `uint8_t` | Scaling factor for current input. |
 
------
+### **Runtime Updates**
+* **`chgc_set_voltage_V(self, val)`**: Ingests raw scaled voltage; resets report timer.
+* **`chgc_set_current_A(self, val)`**: Ingests raw scaled current; resets report timer.
+* **`chgc_update(self, delta_ms)`**: Increments internal timers. Executes integration if `update_interval_ms` is reached.
 
-## **Configuration**
+### **Data Retrieval**
+* **`chgc_get_soc_pct(self)`**: Returns integer percentage (0–100).
+* **`chgc_get_energy_wh(self)`**: Returns remaining energy in Watt-hours.
 
-To use the charge counter, you must initialize the `chgc` struct and configure the following parameters:
+---
 
-  * `chgc_set_multiplier()`: Use this to scale down your input voltage and current values if you're using fractional or high-precision values. The internal calculations handle this to maintain accuracy. **MANDATORY** (Before everything else)
-  * `chgc_set_update_interval_ms()`: Define how often the accumulator is updated, in milliseconds. **MANDATORY** (Before everything else).
-  * `chgc_set_full_cap_wh()`: Set the battery's full capacity in **watt-hours (Wh)**.
-  * `chgc_set_full_cap_voltage_V()`: Specify the voltage that indicates a **full charge**.
-  * `chgc_set_initial_cap_kwh()`: Set initial, remaining capacity. Good for retrieving values saved in flash memory.
-
------
-
-## **Usage Example**
+## **Implementation Example**
 
 ```c
-#include "charge_counter.h"
-#include <stdio.h>
+/* Global */
+struct chgc battery;
+struct chgc_config cfg;
 
-int main() {
-	struct chgc my_battery;
+...
 
-	/* Initialize the struct */
-	chgc_init(&my_battery);
+/* Setup */
+	cfg.max_energy_wh      = 24000;
+	cfg.update_interval_ms = 10u;
+	cfg.multiplier_V       = 2u;
+	cfg.multiplier_A       = 2u;
+	cfg.report_timeout_ms  = 500u;
 
-	/* Set battery specifications */
-	chgc_set_multiplier(&my_battery, 2); /* 2x multiplier for precision */
-	chgc_set_update_interval_ms(&my_battery, 100); /* Update every 100ms */
-	chgc_set_full_cap_kwh(&my_battery, 2.5f); /* 2.5 kWh capacity */
-	chgc_set_full_cap_voltage_V(&my_battery, 26); /* 13V (with 2x multiplier) */
-	chgc_set_initial_cap_kwh(&my_battery, 0.0f); /* Initial capacity set to 0 */
+	chgc_init(&battery);
+	chgc_set_config(&battery, cfg);
 
-	/* Main loop */
-	while (1) {
-		/* Read raw sensor values (e.g., from an ADC) */
-		int16_t current_reading = read_current_sensor(); /* in A * 2 */
-		int16_t voltage_reading = read_voltage_sensor(); /* in V * 2 */
+...
 
-		/* Set the runtime values */
-		chgc_set_current_A(&my_battery, current_reading);
-		chgc_set_voltage_V(&my_battery, voltage_reading);
-        
-		/* Update the counter (use system timer delta) */
-		chgc_update(&my_battery, sys_timer_get_delta());
-
-		/* Get the current state */
-		float soc = chgc_get_soc_pct(&my_battery);
-		float remain_cap = chgc_get_remain_cap_kwh(&my_battery);
-
-		printf("SoC: %.2f%%, Remaining Capacity: %.2f kWh\n", soc, remain_cap);
-	}
-    
-	return 0;
-}
-
+/* Loop (assumes 10ms delta (update interval)) */
+	chgc_set_voltage_V(&battery, read_adc_v());
+	chgc_set_current_A(&battery, read_adc_a());
+	chgc_update(&battery, 10); 
 ```
 
 Coverage report is available at: https://furdog.github.io/charge_counter/coverage/
