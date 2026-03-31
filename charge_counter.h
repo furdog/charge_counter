@@ -133,7 +133,7 @@ static int64_t _chgc_conv_wh_to_counts(struct chgc *self, const int64_t val)
 	       _chgc_get_multiplier_total(self);
 }
 
-void _chgc_recalc_energy(struct chgc *self)
+static void _chgc_recalc_energy(struct chgc *self)
 {
 	/* Calculate capacity counts */
 	int64_t full_energy_accum =
