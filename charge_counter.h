@@ -27,12 +27,22 @@
  * With best wishes and respect, furdog
  */
 
-#ifndef CHARGE_COUNTER_HEADER_GUARD
-#define CHARGE_COUNTER_HEADER_GUARD
+#ifndef CHARGE_COUNTER_H
+#define CHARGE_COUNTER_H
 
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+/** How many milliseconds in a hour? */
+#define CHGC_MILLISECONDS_IN_HOUR (1000U * 60U * 60U)
+
+/** SOC resolution (max value) */
+#define CHGC_SOC_MAX (100U)
+
+/** If max energy triggered for this period of time,
+ *  SOC will be dropped to 100% */
+#define MAX_ENERGY_TRIGGER_TIME_MS (5000U)
 
 /******************************************************************************
  * CHARGE COUNTER
@@ -65,8 +75,8 @@ struct chgc {
 	 *  It is compared with debounce time */
 	uint32_t _max_energy_trigger_timer_ms;
 
-	uint16_t _voltage_V; /**< Reported voltage */
-	int16_t	 _current_A; /**< Reported current */
+	uint32_t _voltage_V; /**< Reported voltage */
+	int32_t	 _current_A; /**< Reported current */
 
 	/** If true for certain period of time (debounce)
 	 *  _energy_accum will be set to its maximum value */
@@ -92,8 +102,8 @@ uint32_t chgc_get_energy_wh(const struct chgc *self);
 /** Get max energy, that can be stored */
 uint32_t chgc_get_max_energy_wh(const struct chgc *self);
 
-/** Returns State of Charge in range 0 - 100 */
-uint8_t chgc_get_soc_pct(const struct chgc *self);
+/** Returns State of Charge with 1 percent resolution */
+uint8_t chgc_get_soc_r1pct(const struct chgc *self);
 
 /** Updates voltage reading */
 void chgc_set_voltage_V(struct chgc *self, const uint32_t val_V);
@@ -109,22 +119,23 @@ void chgc_trigger_max_energy(struct chgc *self, const bool val);
 void chgc_update(struct chgc *self, const uint32_t delta_time_ms);
 /*---------------------------------------------------------------------------*/
 
-#ifndef CHARGE_COUNTER_IMPLEMENTATION
+#ifdef CHARGE_COUNTER_IMPL
 static int64_t _chgc_get_multiplier_total(const struct chgc *self)
 {
-	return (self->_config.multiplier_V * self->_config.multiplier_A);
+	return (int64_t)(self->_config.multiplier_V *
+			 self->_config.multiplier_A);
 }
 
 static int64_t _chgc_get_counts_per_hour(const struct chgc *self)
 {
 	uint32_t update_interval = self->_config.update_interval_ms;
 
-	if (update_interval == 0u) {
+	if (update_interval == 0U) {
 		/* Default to 1ms to prevent division by zero */
-		update_interval = 1u;
+		update_interval = 1U;
 	}
 
-	return ((1000u / update_interval) * 60u * 60u);
+	return (int64_t)CHGC_MILLISECONDS_IN_HOUR / update_interval;
 }
 
 static int64_t _chgc_conv_wh_to_counts(struct chgc *self, const int64_t val)
@@ -147,12 +158,12 @@ static void _chgc_recalc_energy(struct chgc *self)
 		self->_max_energy_trigger_timer_ms +=
 		    self->_config.update_interval_ms;
 	} else {
-		self->_max_energy_trigger_timer_ms = 0u;
+		self->_max_energy_trigger_timer_ms = 0U;
 	}
 
 	/* If trigger is active for 5 seconds - set capacity too 100% */
-	if (self->_max_energy_trigger_timer_ms >= 5000u) {
-		self->_max_energy_trigger_timer_ms = 0u;
+	if (self->_max_energy_trigger_timer_ms >= MAX_ENERGY_TRIGGER_TIME_MS) {
+		self->_max_energy_trigger_timer_ms = 0U;
 
 		self->_energy_accum = full_energy_accum;
 	}
@@ -172,27 +183,27 @@ void chgc_init(struct chgc *self)
 	assert(self);
 
 	/* Config */
-	self->_config.update_interval_ms = 0u;
+	self->_config.update_interval_ms = 0U;
 
-	self->_config.report_timeout_ms = 0u;
+	self->_config.report_timeout_ms = 0U;
 
-	self->_config.max_energy_wh = 0u;
+	self->_config.max_energy_wh = 0U;
 
-	self->_config.multiplier_V = 1u;
-	self->_config.multiplier_A = 1u;
+	self->_config.multiplier_V = 1U;
+	self->_config.multiplier_A = 1U;
 
 	/* Runtime */
-	self->_energy_accum = 0u;
+	self->_energy_accum = 0U;
 
-	self->_report_timer_ms = 0u;
-	self->_update_timer_ms = 0u;
+	self->_report_timer_ms = 0U;
+	self->_update_timer_ms = 0U;
 
-	self->_max_energy_trigger_timer_ms = 0u;
+	self->_max_energy_trigger_timer_ms = 0U;
 
-	self->_voltage_V = 0u;
-	self->_current_A = 0u;
+	self->_voltage_V = 0U;
+	self->_current_A = 0U;
 
-	self->_max_energy_trigger = 0u;
+	self->_max_energy_trigger = 0U;
 }
 
 bool chgc_set_config(struct chgc *self, const struct chgc_config cfg)
@@ -202,7 +213,7 @@ bool chgc_set_config(struct chgc *self, const struct chgc_config cfg)
 	assert(self);
 
 	/* If max energy > 0u, the config is considered to already be set */
-	if (self->_config.max_energy_wh == 0u) {
+	if (self->_config.max_energy_wh == 0U) {
 		self->_config = cfg;
 		success	      = true;
 	}
@@ -254,14 +265,14 @@ uint32_t chgc_get_max_energy_wh(const struct chgc *self)
 	return self->_config.max_energy_wh;
 }
 
-uint8_t chgc_get_soc_pct(const struct chgc *self)
+uint8_t chgc_get_soc_r1pct(const struct chgc *self)
 {
-	uint8_t result = 0u;
+	uint8_t result = 0U;
 
 	assert(self);
 
-	if (self->_config.max_energy_wh > 0u) {
-		result = chgc_get_energy_wh(self) * 100u /
+	if (self->_config.max_energy_wh > 0U) {
+		result = chgc_get_energy_wh(self) * CHGC_SOC_MAX /
 			 chgc_get_max_energy_wh(self);
 	}
 
@@ -273,7 +284,7 @@ void chgc_set_voltage_V(struct chgc *self, const uint32_t val)
 	assert(self);
 
 	self->_voltage_V       = val;
-	self->_report_timer_ms = 0u;
+	self->_report_timer_ms = 0U;
 }
 
 void chgc_set_current_A(struct chgc *self, const int32_t val)
@@ -281,7 +292,7 @@ void chgc_set_current_A(struct chgc *self, const int32_t val)
 	assert(self);
 
 	self->_current_A       = val;
-	self->_report_timer_ms = 0u;
+	self->_report_timer_ms = 0U;
 }
 
 void chgc_trigger_max_energy(struct chgc *self, const bool val)
@@ -310,6 +321,6 @@ void chgc_update(struct chgc *self, const uint32_t delta_time_ms)
 		}
 	}
 }
-#endif /* CHARGE_COUNTER_IMPLEMENTATION */
+#endif /* CHARGE_COUNTER_IMPL */
 
-#endif /* CHARGE_COUNTER_HEADER_GUARD */
+#endif /* CHARGE_COUNTER_H */

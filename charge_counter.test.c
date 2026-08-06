@@ -1,3 +1,4 @@
+#define CHARGE_COUNTER_IMPL
 #include "charge_counter.h"
 
 #include <assert.h>
@@ -60,8 +61,8 @@ void chgc_test()
 	printf("chgc_get_energy_wh(&chgc): %u\n", chgc_get_energy_wh(&chgc));
 	assert(cmp_floats_with_epsilon(chgc_get_energy_wh(&chgc), 1750, 0.1));
 
-	printf("chgc_get_soc_pct(&chgc): %u\n", chgc_get_soc_pct(&chgc));
-	assert(cmp_floats_with_epsilon(chgc_get_soc_pct(&chgc), 25.0, 0.1));
+	printf("chgc_get_soc_r1pct(&chgc): %u\n", chgc_get_soc_r1pct(&chgc));
+	assert(cmp_floats_with_epsilon(chgc_get_soc_r1pct(&chgc), 25.0, 0.1));
 
 	/* Put 350 volts and 20 amps during 1 hour (minus one count) */
 	chgc_set_energy_wh(&chgc, 0u);
@@ -92,8 +93,8 @@ void chgc_test()
 	assert(chgc._energy_accum == capacity_counts);
 	printf("chgc_get_energy_wh(&chgc): %u\n", chgc_get_energy_wh(&chgc));
 
-	printf("chgc_get_soc_pct(&chgc): %u\n", chgc_get_soc_pct(&chgc));
-	assert(cmp_floats_with_epsilon(chgc_get_soc_pct(&chgc), 100.0, 0.1));
+	printf("chgc_get_soc_r1pct(&chgc): %u\n", chgc_get_soc_r1pct(&chgc));
+	assert(cmp_floats_with_epsilon(chgc_get_soc_r1pct(&chgc), 100.0, 0.1));
 
 	/* Put 350 volts and -20 amps during 1 hour (minus one count) */
 	for (i = 0; i < ms_per_hour - update_interval_ms; i++) {
@@ -122,8 +123,8 @@ void chgc_test()
 	assert(chgc._energy_accum == 0.0);
 	printf("chgc_get_energy_wh(&chgc): %u\n", chgc_get_energy_wh(&chgc));
 
-	printf("chgc_get_soc_pct(&chgc): %u\n", chgc_get_soc_pct(&chgc));
-	assert(cmp_floats_with_epsilon(chgc_get_soc_pct(&chgc), 0.0, 0.1));
+	printf("chgc_get_soc_r1pct(&chgc): %u\n", chgc_get_soc_r1pct(&chgc));
+	assert(cmp_floats_with_epsilon(chgc_get_soc_r1pct(&chgc), 0.0, 0.1));
 
 	/* Check if 100% voltage sets energy too capacity */
 	chgc_set_voltage_V(&chgc, 400 * CHGC_MULTIPLIER);
@@ -147,8 +148,8 @@ void chgc_test()
 	assert(chgc._energy_accum == capacity_counts);
 	chgc_trigger_max_energy(&chgc, false);
 
-	printf("chgc_get_soc_pct(&chgc): %u\n", chgc_get_soc_pct(&chgc));
-	assert(cmp_floats_with_epsilon(chgc_get_soc_pct(&chgc), 100.0, 0.1));
+	printf("chgc_get_soc_r1pct(&chgc): %u\n", chgc_get_soc_r1pct(&chgc));
+	assert(cmp_floats_with_epsilon(chgc_get_soc_r1pct(&chgc), 100.0, 0.1));
 
 	/* Test if values that have not been reported for certain time will
 	 * not change cap counts */
@@ -185,7 +186,7 @@ void chgc_test()
 	chgc_update(&chgc, 10);
 	assert(temp_counts > chgc._energy_accum);
 
-	printf("chgc_get_soc_pct(&chgc): %u\n", chgc_get_soc_pct(&chgc));
+	printf("chgc_get_soc_r1pct(&chgc): %u\n", chgc_get_soc_r1pct(&chgc));
 }
 
 int main()
