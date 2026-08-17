@@ -35,7 +35,7 @@
 #include <stdint.h>
 
 /** How many milliseconds in a hour? */
-#define CHGC_MILLISECONDS_IN_HOUR (1000U * 60U * 60U)
+#define CHGC_MILLISECONDS_IN_HOUR(type) ((type)1000U * (type)60U * (type)60U)
 
 /** SOC resolution (max value) */
 #define CHGC_SOC_MAX (100U)
@@ -122,20 +122,20 @@ void chgc_update(struct chgc *self, const uint32_t delta_time_ms);
 #ifdef CHARGE_COUNTER_IMPL
 static int64_t _chgc_get_multiplier_total(const struct chgc *self)
 {
-	return (int64_t)(self->_config.multiplier_V *
-			 self->_config.multiplier_A);
+	return (int64_t)self->_config.multiplier_V *
+	       (int64_t)self->_config.multiplier_A;
 }
 
 static int64_t _chgc_get_counts_per_hour(const struct chgc *self)
 {
-	uint32_t update_interval = self->_config.update_interval_ms;
+	int64_t update_interval = self->_config.update_interval_ms;
 
-	if (update_interval == 0U) {
+	if (update_interval == 0) {
 		/* Default to 1ms to prevent division by zero */
-		update_interval = 1U;
+		update_interval = 1;
 	}
 
-	return (int64_t)CHGC_MILLISECONDS_IN_HOUR / update_interval;
+	return CHGC_MILLISECONDS_IN_HOUR(int64_t) / update_interval;
 }
 
 static int64_t _chgc_conv_wh_to_counts(struct chgc *self, const int64_t val)
